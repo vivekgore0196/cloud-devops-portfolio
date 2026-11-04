@@ -1,0 +1,67 @@
+trigger:
+  branches:
+    include:
+      - main
+
+variables:
+  # Define these as pipeline variables. Keep credentials in service connections.
+  imageTag: '$(Build.BuildId)'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  buildContext: '$(Build.SourcesDirectory)'
+
+stages:
+- stage: Build
+  displayName: Build and push image
+  jobs:
+  - job: BuildAndPush
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: Docker@2
+      displayName: Build and push to ACR
+      inputs:
+        command: buildAndPush
+        containerRegistry: 'YOUR-ACR-SERVICE-CONNECTION'
+        repository: '$(ACR_REPOSITORY)'
+        dockerfile: '$(dockerfilePath)'
+        buildContext: '$(buildContext)'
+        tags: |
+          $(imageTag)
+          latest
+
+- stage: Deploy
+  displayName: Deploy to AKS
+  dependsOn: Build
+  jobs:
+  - deployment: DeployToAKS
+    environment: 'portfolio-aks'
+    pool:
+      vmImage: ubuntu-latest
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: KubernetesManifest@1
+            displayName: Create namespace
+            inputs:
+              action: deploy
+              connectionType: 'azureResourceManager'
+              azureSubscriptionConnection: 'YOUR-AZURE-ARM-SERVICE-CONNECTION'
+              azureResourceGroup: 'YOUR-AKS-RESOURCE-GROUP'
+              kubernetesCluster: 'YOUR-AKS-CLUSTER'
+              namespace: '$(AKS_NAMESPACE)'
+              manifests: |
+                $(Build.SourcesDirectory)/k8s/namespace.yaml
+          - task: KubernetesManifest@1
+            displayName: Deploy application
+            inputs:
+              action: deploy
+              connectionType: 'azureResourceManager'
+              azureSubscriptionConnection: 'YOUR-AZURE-ARM-SERVICE-CONNECTION'
+              azureResourceGroup: 'YOUR-AKS-RESOURCE-GROUP'
+              kubernetesCluster: 'YOUR-AKS-CLUSTER'
+              namespace: '$(AKS_NAMESPACE)'
+              manifests: |
+                $(Build.SourcesDirectory)/k8s/deployment.yaml
+              containers: |
+                $(ACR_LOGIN_SERVER)/$(ACR_REPOSITORY):$(imageTag)
